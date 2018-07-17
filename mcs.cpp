@@ -1,7 +1,7 @@
 // Author: Prashant Kumar
 //
 //command to compile this program using terminal:
-//g++ -I /Desktop/boost_1_65_1 mcs7.cpp -lueye_api -o mcs
+//g++ -I /Desktop/boost_1_65_1 mcs.cpp -lueye_api -o mcs
 //
 //http://www.boost.org/doc/libs/1_65_1/more/getting_started/unix-variants.html
 
@@ -247,13 +247,14 @@ int setupCamFn(HIDS hCam) {
 	return success;
 }
 
-void captureImg(HIDS hCam, wchar_t* fileName) {
+bool captureImg(HIDS hCam, wchar_t* fileName) {
 	Time t1(boost::posix_time::microsec_clock::local_time());
-	INT nRet = is_WaitEvent(hCam, IS_SET_EVENT_FRAME, 50000);
+	INT nRet = is_WaitEvent(hCam, IS_SET_EVENT_FRAME, 5000);
 	string retStr = WaitEventRetStr(nRet);
-	//cout<< "is_WaitEvent: "<< retStr << endl;
+	if(log_stuff) cout<< "is_WaitEvent: "<< retStr << endl;
 
-	if (nRet == IS_SUCCESS) {
+	if (nRet == IS_SUCCESS)
+	{
 		/* event signalled */
 		IMAGE_FILE_PARAMS ImageFileParams;
 		ImageFileParams.pwchFileName = fileName;
@@ -264,10 +265,16 @@ void captureImg(HIDS hCam, wchar_t* fileName) {
 		INT nRet = is_ImageFile(hCam, IS_IMAGE_FILE_CMD_SAVE, (void*) &ImageFileParams, sizeof(ImageFileParams));
 		cout << "Status (0 is ok): " << nRet;
 	}
+	else
+	{
+		return false;
+	}
+
 	Time t2(boost::posix_time::microsec_clock::local_time());
 	TimeDuration dt1 = t2 - t1;
 	long msec1 = dt1.total_milliseconds(); 
-	cout << ": Time Elapsed (ms): " << msec1 << endl; 
+	cout << ": Time Elapsed (ms): " << msec1 << endl;
+	return true;
 }
 
 void exitCameras(HIDS hCam) {
@@ -285,6 +292,7 @@ int main(int argc, char* argv[])
 	cout << "2. During camera initialization 'Status ImageFormat' for each should be 125. If not then either reinsert camera USB or restart computer." << endl;
 	cout << "3. Folder with name 'img' should exist here. All images will be saved in it." << endl;
 	cout << "4. To print everything use the command line: ./mcs --log" << endl;
+	cout << "5. Press 'Esc' key to end program correctly." << endl;
 	cout << endl;
 	
 	int nCams = 6;
@@ -392,8 +400,17 @@ int main(int argc, char* argv[])
 	wchar_t* widecstrPtrs [nCams] = { widecstr1, widecstr2, widecstr3, widecstr4, widecstr5, widecstr6 };
 
 	int saveCount = 0;
-
-	for(int imgNo = count; imgNo <= 99999999; imgNo++) {
+	Time t_start(boost::posix_time::microsec_clock::local_time());
+	bool ok = true;
+	int imgNo = count;
+	if (count > 99999999)
+	{
+		cout << "\n*** count is too high. Remove pictures, open count.txt, change number to 1. ****\nExiting..." << endl;
+		ok = false;
+	}
+	
+	while(ok)
+	{
 		if(imgNo < 10)
 			imgNoStr = "0000000" + boost::lexical_cast<string>(imgNo);
 		else if(imgNo < 100)
@@ -431,7 +448,14 @@ int main(int argc, char* argv[])
 		for (int i = 0; i < nCams; i++)
 		{
 			if(useCamIds[i])
-				captureImg(hCamIds[i], widecstrPtrs[i]);
+			{
+				if(!captureImg(hCamIds[i], widecstrPtrs[i]))
+				{
+					cout << "Image not being captured! Exiting..." << endl; 
+					ok = false;
+					break;
+				}
+			}
 		}
 		//captureImg(hCam1, widecstr1);
 		//captureImg(hCam2, widecstr2);
@@ -440,6 +464,19 @@ int main(int argc, char* argv[])
 		//captureImg(hCam5, widecstr5);
 		//captureImg(hCam6, widecstr6);
 
+		if(imgNo == count+2) {
+			Time t_end(boost::posix_time::microsec_clock::local_time());
+			TimeDuration dt_loop = t_end - t_start;
+			long msec_loop = dt_loop.total_milliseconds();
+			if(msec_loop < 1000)
+			{
+				cout << "Capture Loop is running faster than anticipated. Some error is there in camera initialization. Exiting..." << endl; 
+				ok = false;
+				break;
+			}
+		}
+		
+		//save count number every 10 images
 		saveCount++;
 		if(saveCount == 10) {
 			ofstream myfile;
@@ -448,6 +485,11 @@ int main(int argc, char* argv[])
 			myfile.close();
 			saveCount = 0;
 		}
+		
+		//sleep anyway for 100ms
+		usleep(100*1000);
+		
+		++imgNo;
 	}
 
 

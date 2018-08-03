@@ -15,8 +15,10 @@
 #include <cstring>
 #include <string>
 #include <unistd.h>
-#include<boost/locale.hpp>
-#include<boost/lexical_cast.hpp>
+#include <boost/locale.hpp>
+#include <boost/lexical_cast.hpp>
+#include <boost/filesystem.hpp>
+
 
 using namespace std;
 #include "boost/date_time/posix_time/posix_time.hpp" 
@@ -176,9 +178,11 @@ string WaitEventRetStr(INT nRet){
 }
 
 int setupCamFn(HIDS hCam) {
+	cout << " _settingUpCamID_" << hCam << "_";
 	bool success = false;
 	//Kamera öffnen
-	INT nRet = is_InitCamera (&hCam, NULL);
+	INT nRet = is_InitCamera(&hCam, NULL);
+	cout << hCam << "_";
 	if(log_stuff){
 		printf("Status Init %d\n",nRet);
 		string retStr = InitCameraRetStr(nRet);
@@ -191,21 +195,21 @@ int setupCamFn(HIDS hCam) {
 	if(log_stuff) printf("Status is_PixelClock GET %d, nPixelClock %d\n",nRet,nPixelClock);
 	nRet = is_PixelClock(hCam, IS_PIXELCLOCK_CMD_SET, (void*)&nPixelClock, sizeof(nPixelClock));
 	if(log_stuff) printf("Status is_PixelClock SET %d\n",nRet);
-
+	
 	//Farbmodus der Kamera setzen
 	//INT colorMode = IS_CM_CBYCRY_PACKED;
 	INT colorMode = IS_CM_BGR8_PACKED; //IS_CM_BGR8_PACKED;
 
 	nRet = is_SetColorMode(hCam,colorMode);
 	if(log_stuff) printf("Status SetColorMode %d\n",nRet);
-
+	
 	UINT formatID = 1;
 	//Bildgröße einstellen -> 2592x1944
 	nRet = is_ImageFormat(hCam, IMGFRMT_CMD_SET_FORMAT, &formatID, 1);
 	if(log_stuff) printf("Status ImageFormat (125 is ok) %d\n",nRet);
 	if(nRet == 125)
 		success = true;
-
+	
 	//Speicher für Bild alloziieren
 	int memID = 0;
 	char* pMem = NULL;
@@ -215,7 +219,7 @@ int setupCamFn(HIDS hCam) {
 	//diesen Speicher aktiv setzen
 	nRet = is_SetImageMem(hCam, pMem, memID);
 	if(log_stuff) printf("Status SetImageMem %d\n",nRet);
-
+	
 	//Bilder im Kameraspeicher belassen
 	INT displayMode = IS_SET_DM_DIB;
 	nRet = is_SetDisplayMode (hCam, displayMode);
@@ -226,7 +230,7 @@ int setupCamFn(HIDS hCam) {
 	nRet = is_SetAutoParameter(hCam, IS_SET_ENABLE_AUTO_SHUTTER, &dEnable, 0 );
 	if(log_stuff) printf("Status AutoExposure %d\n",nRet);
 	//IS_SET_ENABLE_AUTO_SENSOR_SHUTTER
-
+	
 	//putting in auto gain
 	double dEnable2 = 1;
 	nRet = is_SetAutoParameter(hCam, IS_SET_ENABLE_AUTO_GAIN, &dEnable2, 0 );
@@ -235,7 +239,7 @@ int setupCamFn(HIDS hCam) {
 	//setting to external Hardware Trigger mode with Rising Signal Edge
 	is_SetExternalTrigger(hCam, IS_SET_TRIGGER_HI_LO);
 	if(log_stuff) printf("Status is_SetExternalTrigger %d\n",nRet);
-
+	
 	is_EnableEvent(hCam, IS_SET_EVENT_FRAME);
 
 	//continous capture and transfer of images to image memory
@@ -243,16 +247,20 @@ int setupCamFn(HIDS hCam) {
 	if(log_stuff) printf("Status is_CaptureVideo %d\n",nRet);
 	
 	cout << "cam" << hCam << " params set. " << (success ? "success" : "failure") << endl;
-	usleep(250*1000);
+	//usleep(10*1000);
 	return success;
 }
 
-bool captureImg(HIDS hCam, wchar_t* fileName) {
+bool captureImg(HIDS hCam, wchar_t* fileName)
+{
 	Time t1(boost::posix_time::microsec_clock::local_time());
 	INT nRet = is_WaitEvent(hCam, IS_SET_EVENT_FRAME, 5000);
-	string retStr = WaitEventRetStr(nRet);
-	if(log_stuff) cout<< "is_WaitEvent: "<< retStr << endl;
-
+	if(log_stuff) 
+	{
+		string retStr = WaitEventRetStr(nRet);
+		cout<< "is_WaitEvent: "<< retStr << endl;
+	}
+	
 	if (nRet == IS_SUCCESS)
 	{
 		/* event signalled */
@@ -263,17 +271,21 @@ bool captureImg(HIDS hCam, wchar_t* fileName) {
 		ImageFileParams.nQuality = 0;
 		ImageFileParams.nFileType = IS_IMG_BMP; //JPG BMP PNG
 		INT nRet = is_ImageFile(hCam, IS_IMAGE_FILE_CMD_SAVE, (void*) &ImageFileParams, sizeof(ImageFileParams));
-		cout << "Status (0 is ok): " << nRet;
+		if(nRet == 0)
+			cout << "_Cam" << hCam;
+		else
+			cout << "\nCam" << hCam << "_Status(0 is ok):" << nRet << endl;
 	}
 	else
 	{
+		cout << "\nCam" << hCam << "_WaitEvent_Failure" << nRet << endl;
 		return false;
 	}
-
+	
 	Time t2(boost::posix_time::microsec_clock::local_time());
 	TimeDuration dt1 = t2 - t1;
 	long msec1 = dt1.total_milliseconds(); 
-	cout << ": Time Elapsed (ms): " << msec1 << endl;
+	cout << "_" << msec1 << "ms_";
 	return true;
 }
 
@@ -326,21 +338,20 @@ int main(int argc, char* argv[])
 		}
 	}
 	
+	cout << "Camera IDs: Usage:\n";
+	for (int i = 0; i < nCams; i++)
+	{
+		cout << hCamIds[i] << " " << (useCamIds[i] ? "true" : "false") << endl;
+	}
+	cout << endl;
 	
-	string countTxt;
-	std::ifstream myfile("count.txt");
-	myfile >> countTxt;
-	int count = boost::lexical_cast<int>(countTxt);
-	cout << "image_count is " << count << endl;
-	myfile.close();
-
-	//HIDS hCam1 = 1;
-	//HIDS hCam2 = 2;
-	//HIDS hCam3 = 3;
-	//HIDS hCam4 = 4;
-	//HIDS hCam5 = 5;
-	//HIDS hCam6 = 6;
-
+	//string countTxt;
+	//std::ifstream myfile("count.txt");
+	//myfile >> countTxt;
+	//int count = boost::lexical_cast<int>(countTxt);
+	//cout << "image_count is " << count << endl;
+	//myfile.close();
+	
 	bool allsuccess = true;
 	cout << "Setup cameras:" << endl;
 	for (int i = 0; i < nCams; i++)
@@ -348,12 +359,7 @@ int main(int argc, char* argv[])
 		if(useCamIds[i])
 			allsuccess *= setupCamFn(hCamIds[i]);
 	}
-	//allsuccess *= setupCamFn(hCam1);
-	//allsuccess *= setupCamFn(hCam2);
-	//allsuccess *= setupCamFn(hCam3);
-	//allsuccess *= setupCamFn(hCam4);
-	//allsuccess *= setupCamFn(hCam5);
-	//allsuccess *= setupCamFn(hCam6);
+	
 	printf("All Camera Setup Result: %s\n", allsuccess ? "success" : "failure");
 	
 	if(!allsuccess)
@@ -364,31 +370,66 @@ int main(int argc, char* argv[])
 			if(useCamIds[i])
 				exitCameras(hCamIds[i]);
 		}
-		//exitCameras(hCam1);
-		//exitCameras(hCam2);
-		//exitCameras(hCam3);
-		//exitCameras(hCam4);
-		//exitCameras(hCam5);
-		//exitCameras(hCam6);
 		return 0;
 	}
 	
-	usleep(250*1000);
-	cout << "Start capturing..." << endl;
+	std::time_t rawtime;
+	std::tm* timeinfoA;
+	char buffer [80];
 
-	string imgNoStr = "00000000";
-	string str1 = "./img/C1I" + imgNoStr + ".bmp";
-	string str2 = "./img/C2I" + imgNoStr + ".bmp";
-	string str3 = "./img/C3I" + imgNoStr + ".bmp";
-	string str4 = "./img/C4I" + imgNoStr + ".bmp";
-	string str5 = "./img/C5I" + imgNoStr + ".bmp";
-	string str6 = "./img/C6I" + imgNoStr + ".bmp";
-	wchar_t* widecstr1 = new wchar_t[str1.length()];
-	wchar_t* widecstr2 = new wchar_t[str2.length()];
-	wchar_t* widecstr3 = new wchar_t[str3.length()];
-	wchar_t* widecstr4 = new wchar_t[str4.length()];
-	wchar_t* widecstr5 = new wchar_t[str5.length()];
-	wchar_t* widecstr6 = new wchar_t[str6.length()];
+	std::time(&rawtime);
+	timeinfoA = std::localtime(&rawtime);
+
+	std::strftime(buffer,80,"%Y-%m-%d-%H-%M-%S",timeinfoA);
+	string save_dir_base = "/mnt/dr1/images/";
+	string save_directory = save_dir_base + buffer + "/";
+
+	//base time = create tm with today's date
+	std::tm timeinfo = std::tm();
+	timeinfo.tm_year = timeinfoA->tm_year;
+	timeinfo.tm_mon = timeinfoA->tm_mon;
+	timeinfo.tm_mday = timeinfoA->tm_mday;
+	std::time_t tt = std::mktime (&timeinfo);
+	
+	boost::filesystem::path dir(save_directory);
+	if(boost::filesystem::create_directory(dir))
+	{
+		std::cout << "Created save directory: " << save_directory << "\n";
+	}
+	else
+	{
+		std::cout << "Could not create save directory! " << save_directory << "\n";
+		return 0;
+	}
+	boost::filesystem::path dir1(save_directory + "cam1/");
+	boost::filesystem::path dir2(save_directory + "cam2/");
+	boost::filesystem::path dir3(save_directory + "cam3/");
+	boost::filesystem::path dir4(save_directory + "cam4/");
+	boost::filesystem::path dir5(save_directory + "cam5/");
+	boost::filesystem::path dir6(save_directory + "cam6/");
+	if(!boost::filesystem::create_directory(dir1) || !boost::filesystem::create_directory(dir2) || !boost::filesystem::create_directory(dir3)
+		 || !boost::filesystem::create_directory(dir4) || !boost::filesystem::create_directory(dir5) || !boost::filesystem::create_directory(dir6))
+	{
+		std::cout << "Could not create cam* save directories!" << "\n";
+		return 0;
+	}
+	
+	usleep(100*1000);
+	cout << "Start capturing...";
+
+	string imgNoStr = "0";
+	string str1 = save_directory + "cam1/" + imgNoStr + ".bmp";
+	string str2 = save_directory + "cam2/" + imgNoStr + ".bmp";
+	string str3 = save_directory + "cam3/" + imgNoStr + ".bmp";
+	string str4 = save_directory + "cam4/" + imgNoStr + ".bmp";
+	string str5 = save_directory + "cam5/" + imgNoStr + ".bmp";
+	string str6 = save_directory + "cam6/" + imgNoStr + ".bmp";
+	wchar_t* widecstr1 = new wchar_t[str1.length()+10];
+	wchar_t* widecstr2 = new wchar_t[str2.length()+10];
+	wchar_t* widecstr3 = new wchar_t[str3.length()+10];
+	wchar_t* widecstr4 = new wchar_t[str4.length()+10];
+	wchar_t* widecstr5 = new wchar_t[str5.length()+10];
+	wchar_t* widecstr6 = new wchar_t[str6.length()+10];
 	for(int i=0; i<str1.length(); i++) {
 		widecstr1[i] = str1[i];
 		widecstr2[i] = str2[i];
@@ -399,43 +440,23 @@ int main(int argc, char* argv[])
 	}
 	wchar_t* widecstrPtrs [nCams] = { widecstr1, widecstr2, widecstr3, widecstr4, widecstr5, widecstr6 };
 
-	int saveCount = 0;
 	Time t_start(boost::posix_time::microsec_clock::local_time());
 	bool ok = true;
+	int count = 1;
 	int imgNo = count;
-	if (count > 99999999)
-	{
-		cout << "\n*** count is too high. Remove pictures, open count.txt, change number to 1. ****\nExiting..." << endl;
-		ok = false;
-	}
 	
 	while(ok)
 	{
-		if(imgNo < 10)
-			imgNoStr = "0000000" + boost::lexical_cast<string>(imgNo);
-		else if(imgNo < 100)
-			imgNoStr = "000000" + boost::lexical_cast<string>(imgNo);
-		else if(imgNo < 1000)
-			imgNoStr = "00000" + boost::lexical_cast<string>(imgNo);
-		else if(imgNo < 10000)
-			imgNoStr = "0000" + boost::lexical_cast<string>(imgNo);
-		else if(imgNo < 100000)
-			imgNoStr = "000" + boost::lexical_cast<string>(imgNo);
-		else if(imgNo < 1000000)
-			imgNoStr = "00" + boost::lexical_cast<string>(imgNo);
-		else if(imgNo < 10000000)
-			imgNoStr = "0" + boost::lexical_cast<string>(imgNo);
-		else
-			imgNoStr = boost::lexical_cast<string>(imgNo);
-		cout << "***** Img " + imgNoStr + " *****" << endl;
+		imgNoStr = boost::lexical_cast<string>(imgNo);
+		cout << "\n***** Img " + imgNoStr + " ***** " << save_directory << endl;
 
-		str1 = "./img/C1I" + imgNoStr + ".bmp";
-		str2 = "./img/C2I" + imgNoStr + ".bmp";
-		str3 = "./img/C3I" + imgNoStr + ".bmp";
-		str4 = "./img/C4I" + imgNoStr + ".bmp";
-		str5 = "./img/C5I" + imgNoStr + ".bmp";
-		str6 = "./img/C6I" + imgNoStr + ".bmp";
-
+		str1 = save_directory + "cam1/" + imgNoStr + ".bmp";
+		str2 = save_directory + "cam2/" + imgNoStr + ".bmp";
+		str3 = save_directory + "cam3/" + imgNoStr + ".bmp";
+		str4 = save_directory + "cam4/" + imgNoStr + ".bmp";
+		str5 = save_directory + "cam5/" + imgNoStr + ".bmp";
+		str6 = save_directory + "cam6/" + imgNoStr + ".bmp";
+		
 		for(int i=0; i<str1.length(); i++) {
 			widecstr1[i] = str1[i];
 			widecstr2[i] = str2[i];
@@ -457,12 +478,6 @@ int main(int argc, char* argv[])
 				}
 			}
 		}
-		//captureImg(hCam1, widecstr1);
-		//captureImg(hCam2, widecstr2);
-		//captureImg(hCam3, widecstr3);
-		//captureImg(hCam4, widecstr4);
-		//captureImg(hCam5, widecstr5);
-		//captureImg(hCam6, widecstr6);
 
 		if(imgNo == count+2) {
 			Time t_end(boost::posix_time::microsec_clock::local_time());
@@ -476,15 +491,15 @@ int main(int argc, char* argv[])
 			}
 		}
 		
-		//save count number every 10 images
-		saveCount++;
-		if(saveCount == 10) {
-			ofstream myfile;
-			myfile.open("count.txt", ios::out | ios::trunc);
-			myfile << imgNo;
-			myfile.close();
-			saveCount = 0;
-		}
+		////save count number every 10 images
+		//saveCount++;
+		//if(saveCount == 10) {
+		//	ofstream myfile;
+		//	myfile.open("count.txt", ios::out | ios::trunc);
+		//	myfile << imgNo;
+		//	myfile.close();
+		//	saveCount = 0;
+		//}
 		
 		//sleep anyway for 100ms
 		usleep(100*1000);
@@ -499,12 +514,6 @@ int main(int argc, char* argv[])
 		if(useCamIds[i])
 			exitCameras(hCamIds[i]);
 	}
-	//exitCameras(hCam1);
-	//exitCameras(hCam2);
-	//exitCameras(hCam3);
-	//exitCameras(hCam4);
-	//exitCameras(hCam5);
-	//exitCameras(hCam6);
 	
 	return 0;
 }

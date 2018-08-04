@@ -349,10 +349,9 @@ void exitCameras(HIDS hCam) {
 	logFile << " Exited." << endl;
 }
 
-void closeProgramWaitingFunction()
-{
+void closeProgramWaitingFunction() {
 	char keypressed;
-	while(true)
+	while(ok)
 	{
 		cin >> keypressed;
 		if( keypressed == 27 )
@@ -360,7 +359,6 @@ void closeProgramWaitingFunction()
 			cout << "\nEcs key pressed.." << endl;
 			logFile << "\nEcs key pressed.." << endl;
 			ok = false;
-			while ((getchar()) != '\n');
 			break;
 		}
 		else
@@ -376,6 +374,7 @@ int initializationSteps(int argc, char* argv[]) {
 	cout << "3. To print everything use the command line: './mcs --log' (not recommended)." << endl;
 	cout << "4. To use single camera, use './mcs --cam n', n being camera number 1-6." << endl;
 	cout << "5. To stop program, press 'Esc' key and press Enter." << endl;
+	cout << "6. Provide notes at start and end of program when asked for your future reference. Notes will be saved in file notes.txt" << endl;
 	cout << endl;
 	usleep(1000*1000);
 	
@@ -544,6 +543,7 @@ int main(int argc, char* argv[])
 		if(useCamIds[i])
 			exitCameras(i+1);
 	}
+	while ((getchar()) != '\n');
 	
 	cout << "\nEnter end comments for this imaging session:" << endl;
 	string notes;

@@ -1,9 +1,17 @@
-// Author: Prashant Kumar
-//
-//command to compile this program using terminal:
-//g++ mcs.cpp -lboost_filesystem -lboost_system -lboost_thread -lueye_api -lpthread -I mavlink mavlink/serial_port.cpp mavlink/autopilot_interface.cpp -o mcs
-//
-//http://www.boost.org/doc/libs/1_65_1/more/getting_started/unix-variants.html
+/**********************************************************************
+* 
+* ***** Multi Spectral Camera Image Capture Program *****
+* 
+* Author: Prashant Kumar
+* 
+* command to compile this program using terminal:
+* g++ mcs.cpp -lboost_filesystem -lboost_system -lboost_thread -lueye_api -lpthread -I mavlink mavlink/serial_port.cpp mavlink/autopilot_interface.cpp -o mcs
+* 
+* Manual for ueye functions
+* https://en.ids-imaging.com/manuals/uEye_SDK/EN/uEye_Manual_4.90.6/index.html
+* 
+* 
+***********************************************************************/
 
 #include <stdio.h>
 #include <string.h>

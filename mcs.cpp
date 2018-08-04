@@ -1,7 +1,7 @@
 // Author: Prashant Kumar
 //
 //command to compile this program using terminal:
-//g++ -I /Desktop/boost_1_65_1 mcs.cpp -lueye_api -o mcs
+//g++ mcs.cpp -lboost_filesystem -lboost_system -lboost_thread -lueye_api -o mcs
 //
 //http://www.boost.org/doc/libs/1_65_1/more/getting_started/unix-variants.html
 
@@ -18,7 +18,7 @@
 #include <boost/locale.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/filesystem.hpp>
-
+#include <boost/thread.hpp>
 
 using namespace std;
 #include "boost/date_time/posix_time/posix_time.hpp" 
@@ -28,6 +28,16 @@ typedef boost::posix_time::time_duration TimeDuration;
 //https://gist.github.com/ChristianUlbrich/7871863#file-test_frame_capture-c
 
 bool log_stuff = false;
+static int imgNo = 0;
+static string save_dir_base = "/mnt/dr1/images/";
+static string save_directory = "";
+static bool ok = true;
+static Time t_cycle;
+ofstream logFile, notesFile;
+string notesFileName;
+const int nCams = 6;
+HIDS hCamIds [nCams];// = { 1, 2, 3, 4, 5, 6 };
+bool useCamIds [nCams];// = { true, true, true, true, true, true };
 
 string InitCameraRetStr(INT nRet){
 	string retStrA;
@@ -178,22 +188,27 @@ string WaitEventRetStr(INT nRet){
 }
 
 int setupCamFn(HIDS hCam) {
+	uint initial_hCam = hCam;
 	cout << " _settingUpCamID_" << hCam << "_";
+	logFile << " _settingUpCamID_" << hCam << "_";
+	
 	bool success = false;
 	//Kamera öffnen
 	INT nRet = is_InitCamera(&hCam, NULL);
 	cout << hCam << "_";
-	if(log_stuff){
-		printf("Status Init %d\n",nRet);
-		string retStr = InitCameraRetStr(nRet);
-		cout << retStr + "\n";
-	}
+	logFile << hCam << "_";
+	
+	string retStr = InitCameraRetStr(nRet);
+	logFile << "Status Init:" << nRet << ":" << retStr << endl;
+	if(log_stuff) cout << "Status Init:" << nRet << ":" << retStr << endl;
 
 	//Pixel-Clock setzen
 	UINT nPixelClock;
 	nRet = is_PixelClock(hCam, IS_PIXELCLOCK_CMD_GET, (void*)&nPixelClock, sizeof(nPixelClock));
+	logFile << "Status is_PixelClock GET " << nRet << ", nPixelClock " << nPixelClock << endl;
 	if(log_stuff) printf("Status is_PixelClock GET %d, nPixelClock %d\n",nRet,nPixelClock);
 	nRet = is_PixelClock(hCam, IS_PIXELCLOCK_CMD_SET, (void*)&nPixelClock, sizeof(nPixelClock));
+	logFile << "Status is_PixelClock SET " << nRet << endl;
 	if(log_stuff) printf("Status is_PixelClock SET %d\n",nRet);
 	
 	//Farbmodus der Kamera setzen
@@ -201,11 +216,13 @@ int setupCamFn(HIDS hCam) {
 	INT colorMode = IS_CM_BGR8_PACKED; //IS_CM_BGR8_PACKED;
 
 	nRet = is_SetColorMode(hCam,colorMode);
+	logFile << "Status SetColorMode " << nRet << endl;
 	if(log_stuff) printf("Status SetColorMode %d\n",nRet);
 	
 	UINT formatID = 1;
 	//Bildgröße einstellen -> 2592x1944
 	nRet = is_ImageFormat(hCam, IMGFRMT_CMD_SET_FORMAT, &formatID, 1);
+	logFile << "Status ImageFormat (125 is ok) " << nRet << endl;
 	if(log_stuff) printf("Status ImageFormat (125 is ok) %d\n",nRet);
 	if(nRet == 125)
 		success = true;
@@ -214,175 +231,162 @@ int setupCamFn(HIDS hCam) {
 	int memID = 0;
 	char* pMem = NULL;
 	nRet = is_AllocImageMem(hCam, 1280, 1024, 24, &pMem, &memID);
+	logFile << "Status AllocImage " << nRet << endl;
 	if(log_stuff) printf("Status AllocImage %d\n",nRet);
 
 	//diesen Speicher aktiv setzen
 	nRet = is_SetImageMem(hCam, pMem, memID);
+	logFile << "Status SetImageMem " << nRet << endl;
 	if(log_stuff) printf("Status SetImageMem %d\n",nRet);
 	
 	//Bilder im Kameraspeicher belassen
 	INT displayMode = IS_SET_DM_DIB;
 	nRet = is_SetDisplayMode (hCam, displayMode);
+	logFile << "Status displayMode " << nRet << endl;
 	if(log_stuff) printf("Status displayMode %d\n",nRet);
 
 	//putting in auto exposure
 	double dEnable = 1;
 	nRet = is_SetAutoParameter(hCam, IS_SET_ENABLE_AUTO_SHUTTER, &dEnable, 0 );
+	logFile << "Status AutoExposure " << nRet << endl;
 	if(log_stuff) printf("Status AutoExposure %d\n",nRet);
 	//IS_SET_ENABLE_AUTO_SENSOR_SHUTTER
 	
 	//putting in auto gain
 	double dEnable2 = 1;
 	nRet = is_SetAutoParameter(hCam, IS_SET_ENABLE_AUTO_GAIN, &dEnable2, 0 );
+	logFile << "Status AutoGain " << nRet << endl;
 	if(log_stuff) printf("Status AutoGain %d\n",nRet);
 
 	//setting to external Hardware Trigger mode with Rising Signal Edge
 	is_SetExternalTrigger(hCam, IS_SET_TRIGGER_HI_LO);
+	logFile << "Status is_SetExternalTrigger " << nRet << endl;
 	if(log_stuff) printf("Status is_SetExternalTrigger %d\n",nRet);
 	
 	is_EnableEvent(hCam, IS_SET_EVENT_FRAME);
 
 	//continous capture and transfer of images to image memory
 	nRet = is_CaptureVideo(hCam, IS_DONT_WAIT);
+	logFile << "Status is_CaptureVideo " << nRet << endl;
 	if(log_stuff) printf("Status is_CaptureVideo %d\n",nRet);
 	
+	logFile << "cam" << hCam << " params set. " << (success ? "success" : "failure") << endl << endl;
 	cout << "cam" << hCam << " params set. " << (success ? "success" : "failure") << endl;
 	//usleep(10*1000);
+	
+	if(initial_hCam != hCam)
+	{
+		cout << "_Fault_hCamId_changed_from_" << initial_hCam << "_to_" << hCam << endl;
+		logFile << "_Fault_hCamId_changed_from_" << initial_hCam << "_to_" << hCam << endl << endl;
+		success = false;
+	}
+	
 	return success;
 }
 
-bool captureImg(HIDS hCam, wchar_t* fileName)
-{
+bool captureImg(HIDS hCam) {
 	Time t1(boost::posix_time::microsec_clock::local_time());
+	
 	INT nRet = is_WaitEvent(hCam, IS_SET_EVENT_FRAME, 5000);
-	if(log_stuff) 
+	
+	Time t2(boost::posix_time::microsec_clock::local_time());
+	TimeDuration dt1 = t2 - t1;
+	long msec1 = dt1.total_milliseconds(); 
+	if(msec1 > 5) 	//in general fetch time is less than 1ms, so anything more than 5ms is for sure next image count
 	{
-		string retStr = WaitEventRetStr(nRet);
-		cout<< "is_WaitEvent: "<< retStr << endl;
+		dt1 = t2 - t_cycle;		//cycle time
+		msec1 = dt1.total_milliseconds();  
+		++imgNo;
+		cout << "\n" << msec1 << "ms\tImgNo_" << imgNo << "___";
+		logFile << "\n" << msec1 << "ms\tImgNo_" << imgNo << "___";
+		t_cycle = t2;
 	}
 	
 	if (nRet == IS_SUCCESS)
 	{
+		string str = save_directory + "cam" + boost::lexical_cast<string>(hCam) + "/" + boost::lexical_cast<string>(imgNo) + ".bmp";
+		wchar_t* widecstr = new wchar_t[str.length()];
+		for(int i=0; i<str.length(); i++)
+			widecstr[i] = str[i];
+		
 		/* event signalled */
 		IMAGE_FILE_PARAMS ImageFileParams;
-		ImageFileParams.pwchFileName = fileName;
+		ImageFileParams.pwchFileName = widecstr;
 		ImageFileParams.pnImageID = NULL;
 		ImageFileParams.ppcImageMem = NULL;
 		ImageFileParams.nQuality = 0;
 		ImageFileParams.nFileType = IS_IMG_BMP; //JPG BMP PNG
 		INT nRet = is_ImageFile(hCam, IS_IMAGE_FILE_CMD_SAVE, (void*) &ImageFileParams, sizeof(ImageFileParams));
 		if(nRet == 0)
-			cout << "_Cam" << hCam;
+		{
+			cout << "_Cam" << hCam << "_";
+			logFile << "_Cam" << hCam << "_";
+		}
 		else
+		{
 			cout << "\nCam" << hCam << "_Status(0 is ok):" << nRet << endl;
+			logFile << "\nCam" << hCam << "_Status(0 is ok):" << nRet << endl;
+		}
 	}
 	else
 	{
-		cout << "\nCam" << hCam << "_WaitEvent_Failure" << nRet << endl;
+		cout << "\nCam" << hCam << "__is_WaitEvent_Failure" << nRet << endl;
+		logFile << "\nCam" << hCam << "__is_WaitEvent_Failure" << nRet << endl;
+		string retStr = WaitEventRetStr(nRet);
+		cout << "is_WaitEvent: " << retStr << endl;
+		logFile << "is_WaitEvent: " << retStr << endl;
 		return false;
 	}
-	
-	Time t2(boost::posix_time::microsec_clock::local_time());
-	TimeDuration dt1 = t2 - t1;
-	long msec1 = dt1.total_milliseconds(); 
-	cout << "_" << msec1 << "ms_";
 	return true;
 }
 
 void exitCameras(HIDS hCam) {
 	cout << "Exit camera: " << hCam << "...";
+	logFile << "Exit camera: " << hCam << "...";
 	is_DisableEvent(hCam, IS_SET_EVENT_FRAME);
 	is_ExitCamera(hCam);
 	cout << " Exited." << endl;
+	logFile << " Exited." << endl;
 }
 
-int main(int argc, char* argv[])
+void closeProgramWaitingFunction()
 {
+	char keypressed;
+	while(true)
+	{
+		cin >> keypressed;
+		if( keypressed == 27 )
+		{
+			cout << "\nEcs key pressed.." << endl;
+			logFile << "\nEcs key pressed.." << endl;
+			ok = false;
+			while ((getchar()) != '\n');
+			break;
+		}
+		else
+			cout << "Key Pressed: " << keypressed << endl;
+	}
+}
+
+int initializationSteps(int argc, char* argv[]) {
 	cout << "\n***** Multi Spectral Camera Image Capture Program *****\n" << endl;
 	cout << "Important notes:" << endl;
-	cout << "1. 'count.txt' file should exist here and have a positive number in it. This number will be the starting number of images." << endl;
-	cout << "2. During camera initialization 'Status ImageFormat' for each should be 125. If not then either reinsert camera USB or restart computer." << endl;
-	cout << "3. Folder with name 'img' should exist here. All images will be saved in it." << endl;
-	cout << "4. To print everything use the command line: ./mcs --log" << endl;
-	cout << "5. Press 'Esc' key to end program correctly." << endl;
+	cout << "1. If cameras do not initialize then either remove camera USBs for 5 seconds or shutdown computer, disconnect power, reconnect power and restart computer." << endl;
+	cout << "2. Folder '/mnt/dr1/images' should exist. Additional folder with current date time will be created and all images will be saved in it." << endl;
+	cout << "3. To print everything use the command line: './mcs --log' (not recommended)." << endl;
+	cout << "4. To use single camera, use './mcs --cam n', n being camera number 1-6." << endl;
+	cout << "5. To stop program, press 'Esc' key and press Enter." << endl;
 	cout << endl;
+	usleep(1000*1000);
 	
-	int nCams = 6;
-	HIDS hCamIds [nCams];// = { 1, 2, 3, 4, 5, 6 };
-	bool useCamIds [nCams];// = { true, true, true, true, true, true };
-	for (int i = 0; i < nCams; i++)
-	{
-		hCamIds[i] = i+1;
-		useCamIds[i] = true;
-	}
-	
-	for (int i = 1; i < argc; i++)
-	{
-		if(string(argv[i]) == "--log")
-		{
-			log_stuff = true;
-		}
-		else if(string(argv[i]) == "--cam")
-		{
-			for (int j = 0; j < nCams; j++)
-			{
-				if(j == atoi(argv[i+1]) -1)
-				{
-					cout << "Only use Cam" << j+1 << endl;
-				}
-				else
-				{
-					useCamIds[j] = false;
-				}
-			}
-		}
-	}
-	
-	cout << "Camera IDs: Usage:\n";
-	for (int i = 0; i < nCams; i++)
-	{
-		cout << hCamIds[i] << " " << (useCamIds[i] ? "true" : "false") << endl;
-	}
-	cout << endl;
-	
-	//string countTxt;
-	//std::ifstream myfile("count.txt");
-	//myfile >> countTxt;
-	//int count = boost::lexical_cast<int>(countTxt);
-	//cout << "image_count is " << count << endl;
-	//myfile.close();
-	
-	bool allsuccess = true;
-	cout << "Setup cameras:" << endl;
-	for (int i = 0; i < nCams; i++)
-	{
-		if(useCamIds[i])
-			allsuccess *= setupCamFn(hCamIds[i]);
-	}
-	
-	printf("All Camera Setup Result: %s\n", allsuccess ? "success" : "failure");
-	
-	if(!allsuccess)
-	{
-		printf("Closing...\n");
-		for (int i = 0; i < nCams; i++)
-		{
-			if(useCamIds[i])
-				exitCameras(hCamIds[i]);
-		}
-		return 0;
-	}
-	
+	//directory name is date time
 	std::time_t rawtime;
 	std::tm* timeinfoA;
 	char buffer [80];
-
 	std::time(&rawtime);
 	timeinfoA = std::localtime(&rawtime);
-
 	std::strftime(buffer,80,"%Y-%m-%d-%H-%M-%S",timeinfoA);
-	string save_dir_base = "/mnt/dr1/images/";
-	string save_directory = save_dir_base + buffer + "/";
+	save_directory = save_dir_base + buffer + "/";
 
 	//base time = create tm with today's date
 	std::tm timeinfo = std::tm();
@@ -392,15 +396,73 @@ int main(int argc, char* argv[])
 	std::time_t tt = std::mktime (&timeinfo);
 	
 	boost::filesystem::path dir(save_directory);
-	if(boost::filesystem::create_directory(dir))
-	{
+	if(boost::filesystem::create_directory(dir)) {
 		std::cout << "Created save directory: " << save_directory << "\n";
 	}
-	else
-	{
+	else {
 		std::cout << "Could not create save directory! " << save_directory << "\n";
-		return 0;
+		return -1;
 	}
+	
+	//log file
+	string logFileName = save_directory + "log.txt";
+	logFile.open(logFileName.c_str(), ios_base::app);
+	logFile << save_directory << endl;
+	logFile << "Arguments: ";
+	for (uint i = 0; i < argc; i++)
+		logFile << argv[i] << " ";
+	logFile << endl;
+	
+	for (uint i = 0; i < nCams; i++) {
+		hCamIds[i] = i+1;
+		useCamIds[i] = true;
+	}
+	
+	for (uint i = 1; i < argc; i++)
+	{
+		if(string(argv[i]) == "--log") {
+			log_stuff = true;
+		}
+		else if(string(argv[i]) == "--cam") {
+			for (uint j = 0; j < nCams; j++) {
+				if(j == atoi(argv[i+1]) -1) {
+					cout << "Only use Cam" << j+1 << endl;
+				} else {
+					useCamIds[j] = false;
+				}
+			}
+		}
+	}
+	
+	cout << "Camera IDs: Usage:\n";
+	for (uint i = 0; i < nCams; i++)
+	{
+		cout << i+1 << " " << (useCamIds[i] ? "true" : "false") << " ";
+		logFile << i+1 << " " << (useCamIds[i] ? "true" : "false") << " ";
+	}
+	cout << endl << endl;
+	logFile << endl << endl;
+	
+	bool allsuccess = true;
+	cout << "Setup cameras:" << endl;
+	logFile << "Setup cameras:" << endl;
+	for (uint i = 0; i < nCams; i++) {
+		if(useCamIds[i])
+			allsuccess *= setupCamFn(i+1);
+	}
+	printf("\nAll Camera Setup Result: %s\n", allsuccess ? "success" : "failure");
+	
+	if(!allsuccess)
+	{
+		printf("Closing...\n");
+		for (uint i = 0; i < nCams; i++)
+		{
+			if(useCamIds[i])
+				exitCameras(i+1);
+		}
+		return -1;
+	}
+	
 	boost::filesystem::path dir1(save_directory + "cam1/");
 	boost::filesystem::path dir2(save_directory + "cam2/");
 	boost::filesystem::path dir3(save_directory + "cam3/");
@@ -410,110 +472,90 @@ int main(int argc, char* argv[])
 	if(!boost::filesystem::create_directory(dir1) || !boost::filesystem::create_directory(dir2) || !boost::filesystem::create_directory(dir3)
 		 || !boost::filesystem::create_directory(dir4) || !boost::filesystem::create_directory(dir5) || !boost::filesystem::create_directory(dir6))
 	{
-		std::cout << "Could not create cam* save directories!" << "\n";
-		return 0;
+		cout << "Could not create cam* save directories!" << "\n";
+		logFile << "Could not create cam* save directories!" << "\n";
+		return -1;
 	}
 	
-	usleep(100*1000);
-	cout << "Start capturing...";
+	//threaded function to stop program
+	boost::thread thread_close_prog(closeProgramWaitingFunction);
+	
+	//comments file
+	cout << "\nEnter start comments for this imaging session:" << endl;
+	string notes;
+	getline(cin,notes);
+	notesFileName = save_directory + "notes.txt";
+	notesFile.open(notesFileName.c_str(), ios_base::app);
+	notesFile << save_directory << endl;
+	notesFile << "\nStart comments" << endl;
+	notesFile << notes << endl;
+	notesFile.close();
+	
+	return 0;
+}
 
-	string imgNoStr = "0";
-	string str1 = save_directory + "cam1/" + imgNoStr + ".bmp";
-	string str2 = save_directory + "cam2/" + imgNoStr + ".bmp";
-	string str3 = save_directory + "cam3/" + imgNoStr + ".bmp";
-	string str4 = save_directory + "cam4/" + imgNoStr + ".bmp";
-	string str5 = save_directory + "cam5/" + imgNoStr + ".bmp";
-	string str6 = save_directory + "cam6/" + imgNoStr + ".bmp";
-	wchar_t* widecstr1 = new wchar_t[str1.length()+10];
-	wchar_t* widecstr2 = new wchar_t[str2.length()+10];
-	wchar_t* widecstr3 = new wchar_t[str3.length()+10];
-	wchar_t* widecstr4 = new wchar_t[str4.length()+10];
-	wchar_t* widecstr5 = new wchar_t[str5.length()+10];
-	wchar_t* widecstr6 = new wchar_t[str6.length()+10];
-	for(int i=0; i<str1.length(); i++) {
-		widecstr1[i] = str1[i];
-		widecstr2[i] = str2[i];
-		widecstr3[i] = str3[i];
-		widecstr4[i] = str4[i];
-		widecstr5[i] = str5[i];
-		widecstr6[i] = str6[i];
-	}
-	wchar_t* widecstrPtrs [nCams] = { widecstr1, widecstr2, widecstr3, widecstr4, widecstr5, widecstr6 };
-
-	Time t_start(boost::posix_time::microsec_clock::local_time());
-	bool ok = true;
-	int count = 1;
-	int imgNo = count;
+int main(int argc, char* argv[])
+{
+	int ret = initializationSteps(argc, argv);
+	if(ret == -1)
+		return ret;
+	
+	cout << "\nStart capturing...\n\n\tImgNo_0___";
+	logFile << "\nStart capturing...\n\n\tImgNo_0___";
+	
+	t_cycle = boost::posix_time::microsec_clock::local_time();
+	Time t_start = boost::posix_time::microsec_clock::local_time();
 	
 	while(ok)
 	{
-		imgNoStr = boost::lexical_cast<string>(imgNo);
-		cout << "\n***** Img " + imgNoStr + " ***** " << save_directory << endl;
-
-		str1 = save_directory + "cam1/" + imgNoStr + ".bmp";
-		str2 = save_directory + "cam2/" + imgNoStr + ".bmp";
-		str3 = save_directory + "cam3/" + imgNoStr + ".bmp";
-		str4 = save_directory + "cam4/" + imgNoStr + ".bmp";
-		str5 = save_directory + "cam5/" + imgNoStr + ".bmp";
-		str6 = save_directory + "cam6/" + imgNoStr + ".bmp";
-		
-		for(int i=0; i<str1.length(); i++) {
-			widecstr1[i] = str1[i];
-			widecstr2[i] = str2[i];
-			widecstr3[i] = str3[i];
-			widecstr4[i] = str4[i];
-			widecstr5[i] = str5[i];
-			widecstr6[i] = str6[i];
-		}
-		
-		for (int i = 0; i < nCams; i++)
+		for (uint i = 0; i < nCams; i++)
 		{
 			if(useCamIds[i])
 			{
-				if(!captureImg(hCamIds[i], widecstrPtrs[i]))
+				if(!captureImg(i+1))
 				{
 					cout << "Image not being captured! Exiting..." << endl; 
+					logFile << "Image not being captured! Exiting..." << endl; 
 					ok = false;
 					break;
 				}
 			}
 		}
 
-		if(imgNo == count+2) {
+		if(imgNo == 4) {
 			Time t_end(boost::posix_time::microsec_clock::local_time());
 			TimeDuration dt_loop = t_end - t_start;
 			long msec_loop = dt_loop.total_milliseconds();
-			if(msec_loop < 1000)
+			if(msec_loop < 500)
 			{
 				cout << "Capture Loop is running faster than anticipated. Some error is there in camera initialization. Exiting..." << endl; 
+				logFile << "Capture Loop is running faster than anticipated. Some error is there in camera initialization. Exiting..." << endl; 
 				ok = false;
 				break;
 			}
 		}
 		
-		////save count number every 10 images
-		//saveCount++;
-		//if(saveCount == 10) {
-		//	ofstream myfile;
-		//	myfile.open("count.txt", ios::out | ios::trunc);
-		//	myfile << imgNo;
-		//	myfile.close();
-		//	saveCount = 0;
-		//}
-		
-		//sleep anyway for 100ms
-		usleep(100*1000);
-		
-		++imgNo;
 	}
-
 
 	//Kamera wieder freigeben
-	for (int i = 0; i < nCams; i++)
+	cout << endl;
+	for (uint i = 0; i < nCams; i++)
 	{
 		if(useCamIds[i])
-			exitCameras(hCamIds[i]);
+			exitCameras(i+1);
 	}
+	
+	cout << "\nEnter end comments for this imaging session:" << endl;
+	string notes;
+	getline(cin,notes);
+	notesFile.open(notesFileName.c_str(), ios_base::app);
+	notesFile << "\nEnd comments" << endl;
+	notesFile << notes << endl;
+	notesFile.close();
+	
+	logFile.close();
+	
+	cout << "\nEverything saved at location:\n" << save_directory << endl << endl;
 	
 	return 0;
 }

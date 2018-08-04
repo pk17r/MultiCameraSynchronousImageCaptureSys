@@ -1,7 +1,7 @@
 // Author: Prashant Kumar
 //
 //command to compile this program using terminal:
-//g++ mcs.cpp -lboost_filesystem -lboost_system -lboost_thread -lueye_api -o mcs
+//g++ mcs.cpp -lboost_filesystem -lboost_system -lboost_thread -lueye_api -lpthread -I mavlink mavlink/serial_port.cpp mavlink/autopilot_interface.cpp -o mcs
 //
 //http://www.boost.org/doc/libs/1_65_1/more/getting_started/unix-variants.html
 
@@ -19,6 +19,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/thread.hpp>
+#include "mavlink/mavlink_control.h"
 
 using namespace std;
 #include "boost/date_time/posix_time/posix_time.hpp" 
@@ -33,11 +34,20 @@ static string save_dir_base = "/mnt/dr1/images/";
 static string save_directory = "";
 static bool ok = true;
 static Time t_cycle;
-ofstream logFile, notesFile;
+ofstream logFile, notesFile, gpsLogfile;
 string notesFileName;
 const int nCams = 6;
 HIDS hCamIds [nCams];// = { 1, 2, 3, 4, 5, 6 };
 bool useCamIds [nCams];// = { true, true, true, true, true, true };
+
+//mavlink vars
+bool use_mavlink = true;
+mavlink_local_position_ned_t lpos;
+mavlink_global_position_int_t gpos;
+mavlink_attitude_t att;
+Autopilot_Interface *api;
+string MAVLinkPort = "/dev/ttyUSB0";
+int baudrate = 115200;
 
 string InitCameraRetStr(INT nRet){
 	string retStrA;
@@ -375,6 +385,7 @@ int initializationSteps(int argc, char* argv[]) {
 	cout << "4. To use single camera, use './mcs --cam n', n being camera number 1-6." << endl;
 	cout << "5. To stop program, press 'Esc' key and press Enter." << endl;
 	cout << "6. Provide notes at start and end of program when asked for your future reference. Notes will be saved in file notes.txt" << endl;
+	cout << "7. To not use mavlink use './mcs --no_mavlink'." << endl;
 	cout << endl;
 	usleep(1000*1000);
 	
@@ -421,6 +432,9 @@ int initializationSteps(int argc, char* argv[]) {
 	{
 		if(string(argv[i]) == "--log") {
 			log_stuff = true;
+		}
+		else if(string(argv[i]) == "--no_mavlink") {
+			use_mavlink = false;
 		}
 		else if(string(argv[i]) == "--cam") {
 			for (uint j = 0; j < nCams; j++) {
@@ -493,17 +507,64 @@ int initializationSteps(int argc, char* argv[]) {
 	return 0;
 }
 
-int main(int argc, char* argv[])
-{
-	int ret = initializationSteps(argc, argv);
-	if(ret == -1)
-		return ret;
+void endProgramStuff() {
+	//Kamera wieder freigeben
+	cout << endl;
+	for (uint i = 0; i < nCams; i++)
+	{
+		if(useCamIds[i])
+			exitCameras(i+1);
+	}
+	while ((getchar()) != '\n');
+		
+	cout << "\nEnter end comments for this imaging session:" << endl;
+	string notes;
+	getline(cin,notes);
+	notesFile.open(notesFileName.c_str(), ios_base::app);
+	notesFile << "\nEnd comments" << endl;
+	notesFile << notes << endl;
+	notesFile.close();
 	
+	logFile.close();
+	
+	cout << "\nEverything saved at location:\n" << save_directory << endl << endl;
+}
+
+// ------------------------------------------------------------------------------
+//   Quit Signal Handler
+// ------------------------------------------------------------------------------
+// this function is called when you press Ctrl-C
+void quit_handler( int sig ) {
+	printf("Terminating at User Request\n");
+	
+	// autopilot interface
+	try {
+		autopilot_interface_quit->handle_quit(sig);
+	}
+	catch (int error){}
+
+	// serial port
+	try {
+		serial_port_quit->handle_quit(sig);
+	}
+	catch (int error){}
+	
+	gpsLogfile.close();
+	endProgramStuff();
+
+	// end program here
+	exit(0);
+}
+
+void runImageCapture() {
 	cout << "\nStart capturing...\n\n\tImgNo_0___";
 	logFile << "\nStart capturing...\n\n\tImgNo_0___";
 	
 	t_cycle = boost::posix_time::microsec_clock::local_time();
 	Time t_start = boost::posix_time::microsec_clock::local_time();
+	
+	bool gpsGlobalCycleBool = false;
+	bool imuAttitudeCycleBool = true;
 	
 	while(ok)
 	{
@@ -520,6 +581,15 @@ int main(int argc, char* argv[])
 				}
 			}
 		}
+		
+		if(use_mavlink)
+		{
+			gpos = api->current_messages.global_position_int;
+			lpos = api->current_messages.local_position_ned;
+			att = api->current_messages.attitude;
+			
+			gpsLogfile <<imgNo<<","<<","<<att.roll<<","<<att.pitch<<","<<att.yaw<<","<<att.rollspeed<<","<<att.pitchspeed<<","<<att.yawspeed<<","<<gpos.lat<<","<<gpos.lon<<","<<gpos.alt<<","<<gpos.relative_alt<<","<<gpos.vx<<","<<gpos.vy<<","<<gpos.vz<<","<<gpos.hdg<<","<<lpos.x<<","<<lpos.y<<","<<lpos.z<<","<<"\n";
+		}
 
 		if(imgNo == 4) {
 			Time t_end(boost::posix_time::microsec_clock::local_time());
@@ -535,27 +605,46 @@ int main(int argc, char* argv[])
 		}
 		
 	}
+}
 
-	//Kamera wieder freigeben
-	cout << endl;
-	for (uint i = 0; i < nCams; i++)
+int main(int argc, char* argv[])
+{
+	int ret = initializationSteps(argc, argv);
+	if(ret == -1)
+		return ret;
+	
+	char *uart_name = (char *)MAVLinkPort.c_str();
+	Serial_Port serial_port(uart_name, baudrate);
+	Autopilot_Interface autopilot_interface(&serial_port);
+	if(use_mavlink)
 	{
-		if(useCamIds[i])
-			exitCameras(i+1);
+		string gpsLogfileName = save_directory + "gpsLog.txt";
+		gpsLogfile.open(gpsLogfileName.c_str(), ios_base::app);
+		gpsLogfile << save_directory << endl;
+		gpsLogfile <<"imgNo,att.roll,att.pitch,att.yaw,att.rollspeed,att.pitchspeed,att.yawspeed,gpos.lat,gpos.lon,gpos.alt,gpos.relative_alt,gpos.vx,gpos.vy,gpos.vz,gpos.hdg,lpos.x,lpos.y,lpos.z\n";
+		
+		//mavlink start
+		serial_port_quit         = &serial_port;
+		autopilot_interface_quit = &autopilot_interface;
+		cout << "Start serial port" << endl;
+		//signal(SIGINT,quit_handler);
+		cout << "Initialize MAVLINK" << endl;
+		serial_port.start();
+		cout << "Start api" << endl;
+		autopilot_interface.start();
+		api = &autopilot_interface;
+		cout << "MAVLINK initialized" << endl;
+		
+		runImageCapture();
+		
+		//mavlink stop
+		autopilot_interface.stop();
+		serial_port.stop();
 	}
-	while ((getchar()) != '\n');
+	else
+		runImageCapture();
 	
-	cout << "\nEnter end comments for this imaging session:" << endl;
-	string notes;
-	getline(cin,notes);
-	notesFile.open(notesFileName.c_str(), ios_base::app);
-	notesFile << "\nEnd comments" << endl;
-	notesFile << notes << endl;
-	notesFile.close();
-	
-	logFile.close();
-	
-	cout << "\nEverything saved at location:\n" << save_directory << endl << endl;
+	endProgramStuff();
 	
 	return 0;
 }

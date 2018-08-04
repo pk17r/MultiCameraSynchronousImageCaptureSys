@@ -618,6 +618,10 @@ int main(int argc, char* argv[])
 	Autopilot_Interface autopilot_interface(&serial_port);
 	if(use_mavlink)
 	{
+		cout << "baudrate: " << baudrate << endl;
+		cout << "MAVLinkPort: " << MAVLinkPort << endl;
+		logFile << "baudrate: " << baudrate << endl;
+		logFile << "MAVLinkPort: " << MAVLinkPort << endl;
 		string gpsLogfileName = save_directory + "gpsLog.txt";
 		gpsLogfile.open(gpsLogfileName.c_str(), ios_base::app);
 		gpsLogfile << save_directory << endl;
